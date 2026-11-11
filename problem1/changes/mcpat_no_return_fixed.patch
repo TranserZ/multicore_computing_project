@@ -1,0 +1,11 @@
+diff --git a/cacti/powergating.cc b/cacti/powergating.cc
+index 8141927..051b21c 100644
+--- a/cacti/powergating.cc
++++ b/cacti/powergating.cc
+@@ -143,5 +143,6 @@ double Sleep_tx::compute_penalty()
+ 	So, the sleep time and energy does not matter
+ */
+ 
++	return wakeup_delay;
+ }
+ 

@@ -1,0 +1,9 @@
+# 도구 본체 (각자 설치)
+tools/
+
+# 시뮬레이션 출력
+out/
+
+# Python
+__pycache__/
+*.pyc
