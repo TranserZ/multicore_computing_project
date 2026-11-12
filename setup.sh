@@ -83,8 +83,10 @@ if [[ -x "$TOOLS/gem5/build/X86/gem5.opt" ]]; then
     skip "build/X86/gem5.opt 이미 있음"
 else
     echo "  빌드 시작 (-j$JOBS). 30분~1시간 이상 걸립니다. 로그: tools/gem5_build.log"
-    yes "" | in_docker "$TOOLS/gem5" scons build/X86/gem5.opt -j"$JOBS" \
-        > "$TOOLS/gem5_build.log" 2>&1 \
+    # stdin이 터미널이 아니면 gem5는 git hook 설치 질문을 건너뛴다.
+    # (yes "" | 로 넘기면 빌드가 끝날 때 yes가 SIGPIPE로 죽어 pipefail이 실패로 본다.)
+    in_docker "$TOOLS/gem5" scons build/X86/gem5.opt -j"$JOBS" \
+        < /dev/null > "$TOOLS/gem5_build.log" 2>&1 \
         || die "gem5 빌드 실패. tools/gem5_build.log를 확인하세요."
     ok "빌드 완료"
 fi

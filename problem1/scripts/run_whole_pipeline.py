@@ -158,7 +158,8 @@ def main():
     ap.add_argument("--size", default="simsmall")
     ap.add_argument("--cores", type=int, default=1)
     ap.add_argument("--width", type=int, default=4,
-                    help="fetch/decode/rename/dispatch/issue/wb/commit width")
+                    help="fetch/decode/rename/dispatch/issue/commit width "
+                         "(writeback width는 gem5 기본값 8로 고정)")
     ap.add_argument("--rob", type=int, default=128)
     ap.add_argument("--iq", type=int, default=64)
     ap.add_argument("--lq", type=int, default=32)
