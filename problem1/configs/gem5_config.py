@@ -3,6 +3,8 @@ PARSEC 3.0 full-system run on X86 for the gem5 -> McPAT -> HotSpot flow.
 
 Flow:
   1. Boot Linux and run everything before the ROI on KVM cores (fast).
+     The benchmark is first run --warmup-runs times entirely on KVM so that
+     its code/data pages are in memory; only the last run is measured.
   2. At the PARSEC ROI begin hook (m5 work_begin -> WORKBEGIN),
      switch to O3 cores and reset stats.
   3. At the ROI end hook (WORKEND), dump stats and stop.
@@ -54,6 +56,15 @@ p.add_argument("--clock", default="3GHz")
 p.add_argument("--l1i", default="32KiB")
 p.add_argument("--l1d", default="32KiB")
 p.add_argument("--l2", default="2MiB")
+# 디버그용: ROI 동안 이 간격(마이크로초)마다 통계를 따로 기록한다. 0이면 끔.
+# 켜면 stats.txt에 블록이 여러 개 생기므로 파이프라인 결과용으로는 쓰지 않는다.
+p.add_argument("--stat-period-us", type=int, default=0)
+# 디버그용: ROI 시작부터 켤 gem5 debug flag (쉼표로 구분), ROI 시작 후 멈출 시간(ms)
+p.add_argument("--roi-debug-flags", default="")
+p.add_argument("--roi-max-ms", type=float, default=0)
+# 측정 전에 KVM으로 같은 프로그램을 미리 실행하는 횟수.
+# 필요한 코드/데이터 페이지를 메모리에 올려, ROI 안에서 디스크 I/O를 기다리지 않게 한다.
+p.add_argument("--warmup-runs", type=int, default=1)
 p.add_argument("--kernel", required=True)
 p.add_argument("--disk", required=True)
 args = p.parse_args()
@@ -98,12 +109,15 @@ board = X86Board(
     cache_hierarchy=cache_hierarchy,
 )
 
+run_cmd = (
+    f"parsecmgmt -a run -p {args.benchmark} -c gcc-hooks "
+    f"-i {args.size} -n {args.cores};"
+)
 command = (
     "cd /home/gem5/parsec-benchmark;"
     "source env.sh;"
-    f"parsecmgmt -a run -p {args.benchmark} -c gcc-hooks "
-    f"-i {args.size} -n {args.cores};"
-    "sleep 5;"
+    + run_cmd * (args.warmup_runs + 1)
+    + "sleep 5;"
     "m5 exit;"
 )
 
@@ -117,15 +131,27 @@ roi = {}
 
 
 def on_workbegin():
+    for i in range(args.warmup_runs):
+        print(f"[WARMUP] run {i + 1} ROI begin (KVM, not measured)")
+        yield False
     print(f"[ROI] begin at tick {m5.curTick()}: switch KVM -> O3, reset stats")
     processor.switch()
     m5.stats.reset()
+    if args.stat_period_us > 0:
+        m5.stats.periodicStatDump(args.stat_period_us * 1_000_000)  # 1 us = 1e6 ticks
+    for flag in filter(None, args.roi_debug_flags.split(",")):
+        m5.debug.flags[flag].enable()
+    if args.roi_max_ms > 0:
+        m5.scheduleTickExitFromCurrent(int(args.roi_max_ms * 1e9))
     roi["begin"] = m5.curTick()
     roi["wall"] = time.time()
     yield False
 
 
 def on_workend():
+    for i in range(args.warmup_runs):
+        print(f"[WARMUP] run {i + 1} ROI end")
+        yield False
     roi["end"] = m5.curTick()
     print(f"[ROI] end at tick {roi['end']}: dump stats")
     m5.stats.dump()

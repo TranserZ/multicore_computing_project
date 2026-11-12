@@ -24,6 +24,85 @@ multicore_computing_project/
 └── out/                                 시뮬레이션 출력 (업로드 안 함)
 ```
 
+## 실행 방법
+
+한 가지 구성에 대해 gem5 → McPAT → HotSpot을 한 번에 실행합니다.
+
+```bash
+# 전체 실행 (gem5 포함, 수십 분 소요)
+python3 problem1/scripts/run_whole_pipeline.py --benchmark blackscholes --cores 4 --width 4
+
+# gem5는 건너뛰고 기존 gem5 결과로 McPAT, HotSpot만 다시 실행 (몇 초)
+python3 problem1/scripts/run_whole_pipeline.py --benchmark blackscholes --cores 4 --width 4 --skip-gem5
+```
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| `--benchmark` | (필수) | blackscholes, canneal, freqmine, streamcluster |
+| `--cores` | 1 | 코어 수 (= PARSEC 스레드 수) |
+| `--width` | 4 | fetch, decode, rename, dispatch, issue, writeback, commit width를 함께 설정 |
+| `--rob` `--iq` `--lq` `--sq` | 128, 64, 32, 32 | ROB, IQ, load queue, store queue 크기 |
+| `--l2` | 2MiB | 공유 L2 크기 |
+| `--dcache-ports` | 2 | McPAT에 넣을 데이터 캐시 포트 수 (전력·면적 계산에만 영향) |
+| `--warmup-runs` | 1 | 측정 전에 KVM으로 같은 프로그램을 미리 실행하는 횟수 |
+| `--skip-gem5` | | 기존 gem5 결과 재사용 |
+
+### 처리 흐름
+
+```
+gem5 (KVM으로 부팅 → KVM으로 warm-up 실행 1회 → 다음 실행의 ROI에서 O3 CPU로 전환, ROI만 측정)
+  │  stats.txt, config.json
+  ▼
+glue_code1.py   config.json의 구조 값과 stats.txt의 활동량을 mcpat_template.xml에 채움
+  │  mcpat_in.xml
+  ▼
+McPAT           블록별 전력(dynamic, leakage)과 면적 계산
+  │  mcpat_out.txt
+  ▼
+glue_code2.py   블록별 전력을 뽑아 .ptrace를 만들고, 면적으로 배치도 .flp를 생성
+  │  chip.flp, chip.ptrace
+  ▼
+HotSpot         steady-state 온도 계산
+  │  chip.steady
+  ▼
+result.json     실행 시간, IPC, 전력, 면적, 최고·평균 온도
+```
+
+### 출력 (`out/<benchmark>_c<코어 수>_w<width>/`)
+
+| 위치 | 내용 |
+|---|---|
+| `gem5/` | `stats.txt`, `config.json`, `gem5.log` |
+| `mcpat/` | `mcpat_in.xml`, `mcpat_out.txt` |
+| `hotspot/` | `chip.flp`, `chip.ptrace`, `chip.steady`, `power.json` |
+| `result.json` | 이 구성의 성능, 전력, 온도 요약 |
+
+### HotSpot 블록 구성
+
+- 코어마다 3개: `core{i}_FE`(fetch + rename), `core{i}_EXE`(실행 유닛), `core{i}_MEM`(load/store 유닛 + L1D + TLB)
+- 코어 바깥: `L2`(공유 L2 + 버스), `MC`(메모리 컨트롤러)
+- 배치: 코어를 격자(1코어 1×1, 4코어 2×2, 8코어 4×2)로 놓고 그 아래 한 줄에 L2와 MC를 둠
+
+### 모델링에서 정한 것
+
+| 항목 | 값 | 이유 |
+|---|---|---|
+| 공정 | 22nm, HP 소자 | McPAT이 지원하는 가장 최신 공정 |
+| 데이터 캐시 포트 | `--dcache-ports`로 지정 (기본 2) | gem5의 메모리 유닛 수(한 사이클에 실행 가능한 load/store 수)와 McPAT의 캐시 포트 수(물리적 통로 수)는 뜻이 달라 자동으로 정하지 않음. 32KB 캐시 면적은 2개일 때 3.3mm², 4개일 때 11.8mm² |
+| IQ 크기 | gem5 IQ를 정수용, FP용으로 절반씩 | gem5는 IQ 하나를 같이 쓰고 McPAT은 둘로 나눠 모델링함 |
+| FPU 개수 | FP 덧셈 유닛 + FP 곱셈 유닛 | gem5의 SIMD 유닛은 x86 FP 연산에 쓰이지 않아 제외 |
+| 열 환경 | HotSpot 예제 기본 패키지, 주변 온도 45°C | 모든 실험에서 고정 |
+
+### warm-up 실행이 필요한 이유
+
+warm-up 없이 바로 측정하면 ROI 안에 모든 코어가 쉬는 구간이 몇 ms씩 생깁니다. ROI에서 처음 쓰는 페이지를 읽어오느라 main 스레드가 장치 I/O를 기다리고, 그동안 스레드 생성이 늦어지기 때문입니다. simsmall의 ROI는 수십 ms로 짧아서 이 대기가 결과를 크게 왜곡합니다.
+
+| blackscholes, 4-wide | warm-up 없음 | warm-up 1회 |
+|---|---|---|
+| 1코어 ROI | 30.08ms | 26.16ms |
+| 4코어 ROI | 26.33ms, 20.17ms (실행마다 다름) | 8.32ms |
+| 4코어 speedup | 1.14 | 3.14 |
+
 ## GitHub에 올리는 것 ✅
 
 | 분류 | 파일 | 이유 |
