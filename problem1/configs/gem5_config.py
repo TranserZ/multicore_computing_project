@@ -46,7 +46,8 @@ p.add_argument(
 )
 p.add_argument("--size", default="simsmall")
 p.add_argument("--cores", type=int, default=1)
-# Superscalar width: fetch/decode/rename/dispatch/issue/wb/commit together.
+# Superscalar width: fetch/decode/rename/dispatch/issue/commit together.
+# (writeback width is left at the gem5 default, see below.)
 p.add_argument("--width", type=int, default=4)
 p.add_argument("--rob", type=int, default=128)
 p.add_argument("--iq", type=int, default=64)
@@ -94,7 +95,9 @@ for core in processor._switchable_cores["switch"]:
     cpu.renameWidth = w
     cpu.dispatchWidth = w
     cpu.issueWidth = w
-    cpu.wbWidth = w
+    # wbWidth는 바꾸지 않고 gem5 기본값(8)을 쓴다. width와 함께 2로 줄이면
+    # load 응답이 몰릴 때 writeback 자리가 모자라 gem5가 assertion으로 죽는다
+    # (iew.cc instToCommit -> timebuf.hh 'idx >= -past && idx <= future').
     cpu.commitWidth = w
     cpu.squashWidth = w
     cpu.numROBEntries = args.rob

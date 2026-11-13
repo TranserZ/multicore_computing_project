@@ -16,7 +16,8 @@ multicore_computing_project/
 │   │   ├── mcpat_template.xml           McPAT 기본 설정 (공정, 전압 등 gem5가 알려주지 않는 값)
 │   │   └── hotspot.config               HotSpot 열 환경 설정 (방열판, 주변 온도 등)
 │   ├── scripts/
-│   │   └── run_whole_pipeline.py        전체 실행: gem5(Docker) → glue 1 → McPAT → glue 2 → HotSpot
+│   │   ├── run_whole_pipeline.py        전체 실행: gem5(Docker) → glue 1 → McPAT → glue 2 → HotSpot
+│   │   └── regression_test.sh           회귀 테스트: testcase별 결과 검사 (코드를 바꿀 때마다 실행)
 │   └── changes/
 │       └── mcpat_no_return_fixed.patch  McPAT 무한 루프 버그 수정
 ├── problem2/
@@ -40,7 +41,7 @@ python3 problem1/scripts/run_whole_pipeline.py --benchmark blackscholes --cores 
 |---|---|---|
 | `--benchmark` | (필수) | blackscholes, canneal, freqmine, streamcluster |
 | `--cores` | 1 | 코어 수 (= PARSEC 스레드 수) |
-| `--width` | 4 | fetch, decode, rename, dispatch, issue, writeback, commit width를 함께 설정 |
+| `--width` | 4 | fetch, decode, rename, dispatch, issue, commit width를 함께 설정 (writeback width는 gem5 기본값 8로 고정) |
 | `--rob` `--iq` `--lq` `--sq` | 128, 64, 32, 32 | ROB, IQ, load queue, store queue 크기 |
 | `--l2` | 2MiB | 공유 L2 크기 |
 | `--dcache-ports` | 2 | McPAT에 넣을 데이터 캐시 포트 수 (전력·면적 계산에만 영향) |
@@ -91,6 +92,7 @@ result.json     실행 시간, IPC, 전력, 면적, 최고·평균 온도
 | 데이터 캐시 포트 | `--dcache-ports`로 지정 (기본 2) | gem5의 메모리 유닛 수(한 사이클에 실행 가능한 load/store 수)와 McPAT의 캐시 포트 수(물리적 통로 수)는 뜻이 달라 자동으로 정하지 않음. 32KB 캐시 면적은 2개일 때 3.3mm², 4개일 때 11.8mm² |
 | IQ 크기 | gem5 IQ를 정수용, FP용으로 절반씩 | gem5는 IQ 하나를 같이 쓰고 McPAT은 둘로 나눠 모델링함 |
 | FPU 개수 | FP 덧셈 유닛 + FP 곱셈 유닛 | gem5의 SIMD 유닛은 x86 FP 연산에 쓰이지 않아 제외 |
+| writeback width | 모든 구성에서 gem5 기본값 8 | `--width`와 함께 2로 줄이면 gem5 O3가 assertion으로 중단됨. McPAT 입력에는 들어가지 않는 값 |
 | 열 환경 | HotSpot 예제 기본 패키지, 주변 온도 45°C | 모든 실험에서 고정 |
 
 ### warm-up 실행이 필요한 이유
@@ -102,6 +104,26 @@ warm-up 없이 바로 측정하면 ROI 안에 모든 코어가 쉬는 구간이 
 | 1코어 ROI | 30.08ms | 26.16ms |
 | 4코어 ROI | 26.33ms, 20.17ms (실행마다 다름) | 8.32ms |
 | 4코어 speedup | 1.14 | 3.14 |
+
+## 회귀 테스트
+
+코드를 바꾼 뒤 파이프라인 결과가 여전히 올바른지 확인합니다.
+
+```bash
+# 빠른 모드 (약 20초): 기존 gem5 결과로 glue 1 → McPAT → glue 2 → HotSpot만 다시 실행해 검사
+problem1/scripts/regression_test.sh
+
+# gem5부터 다시 실행 (gem5_config.py를 바꿨을 때. 벤치마크에 따라 수 분~2시간)
+problem1/scripts/regression_test.sh --full blackscholes:1:4 blackscholes:4:4
+
+# 지금 결과를 기준값으로 저장 (의도한 변경으로 결과가 달라졌을 때)
+problem1/scripts/regression_test.sh --update-baseline
+```
+
+- testcase는 `<benchmark>:<코어 수>:<width>` 형식이며, 생략하면 기본 8개(벤치마크 4개, 코어 수 1/4/8, width 2/4/8을 한 번 이상 포함)를 검사합니다.
+- 검사 내용: 요청한 코어 수와 width가 반영됐는지, ROI만 측정했는지, 단계 사이의 값(전력 합계, 블록 이름, 면적)이 일치하는지, 배치도에 겹침이나 빈틈이 없는지, 온도 범위, 기준값과의 차이, 코어 수·width에 따른 경향.
+- 기준값은 `out/<이름>/baseline.json`에 저장되며 각자의 gem5 결과에 묶여 있어 GitHub에는 올리지 않습니다.
+- FAIL이 하나라도 있으면 종료 코드 1을 돌려줍니다. 자세한 옵션은 `regression_test.sh --help`.
 
 ## GitHub에 올리는 것 ✅
 
