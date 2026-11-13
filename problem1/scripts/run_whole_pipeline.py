@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.join(PROJ_DIR, "problem1", "glue"))
 
 import glue_code1  # noqa: E402
 import glue_code2  # noqa: E402
+import results_log  # noqa: E402  (같은 scripts 폴더)
 
 DOCKER_IMAGE = os.environ.get(
     "GEM5_IMAGE", "ghcr.io/gem5/ubuntu-24.04_all-dependencies:v25-1"
@@ -175,6 +176,8 @@ def main():
     ap.add_argument("--outroot", default=os.path.join(PROJ_DIR, "out"))
     ap.add_argument("--skip-gem5", action="store_true",
                     help="gem5를 다시 돌리지 않고 기존 결과를 사용")
+    ap.add_argument("--no-record", action="store_true",
+                    help="problem1/results/runs.csv에 기록하지 않음 (디버그용 실행)")
     args = ap.parse_args()
 
     name = args.name or f"{args.benchmark}_c{args.cores}_w{args.width}"
@@ -241,6 +244,16 @@ def main():
     print(f"  평균 온도        {avg_temp:10.2f} C")
     print(f"[pipeline] 완료 ({(time.time() - t0) / 60:.1f}분) -> "
           f"{os.path.relpath(os.path.join(out, 'result.json'), PROJ_DIR)}")
+
+    # 실행 기록 (같은 구성을 다시 돌려 out/이 덮어써져도 값이 남도록)
+    if not args.no_record:
+        try:
+            row, how = results_log.record(out, gem5_ran=not args.skip_gem5)
+            print(f"[pipeline] 기록 {'추가' if how == 'added' else '갱신'}: "
+                  f"{os.path.relpath(results_log.RUNS_CSV, PROJ_DIR)} (run_id {row['run_id']})")
+        except Exception as e:  # 기록 실패로 실행 결과까지 잃지 않게 한다
+            print(f"[pipeline] 경고: 기록 실패 ({e}). result.json은 정상입니다. "
+                  f"나중에 results_log.py add {os.path.relpath(out, PROJ_DIR)} 로 추가하세요.")
 
 
 if __name__ == "__main__":

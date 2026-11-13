@@ -17,7 +17,10 @@ multicore_computing_project/
 │   │   └── hotspot.config               HotSpot 열 환경 설정 (방열판, 주변 온도 등)
 │   ├── scripts/
 │   │   ├── run_whole_pipeline.py        전체 실행: gem5(Docker) → glue 1 → McPAT → glue 2 → HotSpot
-│   │   └── regression_test.sh           회귀 테스트: testcase별 결과 검사 (코드를 바꿀 때마다 실행)
+│   │   ├── regression_test.sh           회귀 테스트: testcase별 결과 검사 (코드를 바꿀 때마다 실행)
+│   │   └── results_log.py               실행 기록 관리: runs.csv에 추가, 구성별 평균·표준편차 요약
+│   ├── results/
+│   │   └── runs.csv                     실행 기록 (gem5 실행 한 번이 한 줄, 자동으로 쌓임)
 │   └── changes/
 │       └── mcpat_no_return_fixed.patch  McPAT 무한 루프 버그 수정
 ├── problem2/
@@ -47,6 +50,7 @@ python3 problem1/scripts/run_whole_pipeline.py --benchmark blackscholes --cores 
 | `--dcache-ports` | 2 | McPAT에 넣을 데이터 캐시 포트 수 (전력·면적 계산에만 영향) |
 | `--warmup-runs` | 1 | 측정 전에 KVM으로 같은 프로그램을 미리 실행하는 횟수 |
 | `--skip-gem5` | | 기존 gem5 결과 재사용 |
+| `--no-record` | | `problem1/results/runs.csv`에 기록하지 않음 (디버그용 실행) |
 
 ### 처리 흐름
 
@@ -105,6 +109,23 @@ warm-up 없이 바로 측정하면 ROI 안에 모든 코어가 쉬는 구간이 
 | 4코어 ROI | 26.33ms, 20.17ms (실행마다 다름) | 8.32ms |
 | 4코어 speedup | 1.14 | 3.14 |
 
+## 실행 기록 (`problem1/results/runs.csv`)
+
+같은 구성도 실행마다 ROI 시간이 최대 약 10% 달라지므로, 여러 번 실행한 값을 모아 평균을 냅니다.
+
+- `run_whole_pipeline.py`가 끝날 때마다 한 줄이 자동으로 추가됩니다. `out/<이름>/`은 다시 실행하면 덮어써지지만 기록은 남습니다.
+- gem5 실행 한 번이 한 줄입니다(`run_id` = `stats.txt`의 md5). 같은 gem5 결과를 `--skip-gem5`로 다시 처리하면 줄이 늘지 않고 전력·온도 값만 갱신됩니다.
+- 한 줄의 내용: 구성(벤치마크, 코어 수, width, ROB 등), 결과(ROI 시간, IPC, 전력, 면적, 온도), gem5를 돌린 컴퓨터의 CPU, 코드의 commit.
+- 이 파일은 GitHub에 올립니다. 각자 실행한 줄이 merge할 때 모두 남도록 `.gitattributes`에 설정되어 있습니다.
+
+```bash
+# 구성별 실행 횟수, 평균 ± 표준편차
+python3 problem1/scripts/results_log.py summary
+
+# 요약 표를 CSV로 저장
+python3 problem1/scripts/results_log.py summary --out summary.csv
+```
+
 ## 회귀 테스트
 
 코드를 바꾼 뒤 파이프라인 결과가 여전히 올바른지 확인합니다.
@@ -134,6 +155,7 @@ problem1/scripts/regression_test.sh --update-baseline
 | 실행 스크립트 | `problem1/scripts/*` | 실행 방법을 하나로 통일함 |
 | 도구 수정 사항 | `problem1/changes/*` | 모두가 같은 수정본을 써야 함 |
 | 설치 스크립트 | `setup.sh` | 각자 같은 버전의 도구를 설치할 수 있음 |
+| 실행 기록 | `problem1/results/runs.csv` | 여러 번 실행한 값을 모아 평균을 내는 데 필요 |
 | 결과 요약 | 결과표(CSV), 그래프 (예정) | 용량이 작고 보고서 작성에 필요 |
 | 문서 | `README.md`, `PROBLEM1.md`, `PROBLEM2.md` | |
 

@@ -1,0 +1,2 @@
+# 실행 기록은 각자 줄을 추가만 하므로, merge할 때 양쪽 줄을 모두 남긴다.
+problem1/results/runs.csv merge=union
