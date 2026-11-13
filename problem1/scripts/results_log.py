@@ -8,6 +8,8 @@ gem5 실행 한 번이 한 줄이다. 같은 구성을 여러 번 돌리면 줄�
   - run_whole_pipeline.py가 끝날 때마다 자동으로 기록한다.
   - 줄은 gem5 결과(stats.txt)의 md5(run_id)로 구분한다. 같은 gem5 결과를
     --skip-gem5로 다시 처리하면 줄이 늘지 않고 전력, 온도 값만 갱신된다.
+    out_name(각자 컴퓨터의 출력 폴더 이름)은 참고용이라 서로 겹쳐도 된다.
+  - 누가 어디서 돌렸는지는 runner(git 사용자 이름)와 host_cpu 열로 구분한다.
 
 사용 예:
   results_log.py summary                      구성별 실행 횟수, 평균, 표준편차
@@ -36,7 +38,7 @@ CONFIG_COLS = ["benchmark", "size", "cores", "width", "rob", "iq", "lq", "sq",
 METRIC_COLS = ["roi_ms", "insts", "ipc", "power_W", "dynamic_W", "leakage_W",
                "area_mm2", "peak_C", "avg_C"]
 COLUMNS = (["run_id", "gem5_finished"] + CONFIG_COLS + METRIC_COLS
-           + ["gem5_host_min", "host_cpu", "git_commit", "out_name"])
+           + ["gem5_host_min", "host_cpu", "runner", "git_commit", "out_name"])
 # summary에서 평균, 표준편차를 내는 값
 SUMMARY_METRICS = ["roi_ms", "ipc", "power_W", "peak_C", "avg_C"]
 
@@ -51,6 +53,15 @@ def host_cpu():
     except OSError:
         pass
     return ""
+
+
+def runner_name():
+    """실험을 돌린 사람. 환경 변수 RESULTS_RUNNER가 있으면 그 값, 없으면 git 사용자 이름."""
+    name = os.environ.get("RESULTS_RUNNER", "").strip()
+    if not name:
+        name = subprocess.run(["git", "-C", PROJ_DIR, "config", "user.name"],
+                              capture_output=True, text=True).stdout.strip()
+    return name
 
 
 def git_commit():
@@ -90,6 +101,7 @@ def make_row(out_dir, commit=""):
         "avg_C": round(temp["average"], 3),
         "gem5_host_min": round(perf.get("host_seconds", 0) / 60, 1),
         "host_cpu": host_cpu(),
+        "runner": runner_name(),
         "git_commit": commit,
         "out_name": r.get("name", os.path.basename(os.path.normpath(out_dir))),
     }
@@ -137,7 +149,7 @@ def record(out_dir, gem5_ran, commit=None, path=RUNS_CSV):
         old = next((r for r in rows if r["run_id"] == new["run_id"]), None)
         if old:
             # 같은 gem5 실행: gem5와 관련된 정보는 처음 기록을 유지하고 나머지만 갱신
-            for k in ("gem5_finished", "host_cpu", "gem5_host_min"):
+            for k in ("gem5_finished", "host_cpu", "gem5_host_min", "runner"):
                 new[k] = old.get(k) or new[k]
             new["git_commit"] = old.get("git_commit") or new["git_commit"]
             rows[rows.index(old)] = new
@@ -176,7 +188,7 @@ def summarize(rows):
         s["roi_spread_pct"] = ((max(float(r["roi_ms"]) for r in g)
                                 - min(float(r["roi_ms"]) for r in g))
                                / s["roi_ms_mean"] * 100) if len(g) > 1 else None
-        s["hosts"] = len({r["host_cpu"] for r in g})
+        s["hosts"] = len({(r["host_cpu"], r.get("runner", "")) for r in g})
         out.append(s)
     return out
 
@@ -199,7 +211,7 @@ def cmd_summary(args):
         other = ", ".join(f"{k}={s[k]}" for k in default if s[k] != default[k])
         spread = f"{s['roi_spread_pct']:.1f}%" if s["roi_spread_pct"] is not None else "-"
         if s["hosts"] > 1:
-            other = (other + ", " if other else "") + f"CPU {s['hosts']}종 섞임"
+            other = (other + ", " if other else "") + f"실행 환경 {s['hosts']}곳 섞임"
         print(f"{s['benchmark']:14s}{s['cores']:>5s}{s['width']:>6s}{s['n']:>3d}  "
               f"{pm(s, 'roi_ms', 3):>18s}{spread:>8s}  {pm(s, 'ipc', 3):>13s}  "
               f"{pm(s, 'power_W', 3):>14s}  {pm(s, 'peak_C', 2):>12s}  {other}")
