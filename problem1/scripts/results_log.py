@@ -109,6 +109,16 @@ def read_rows(path=RUNS_CSV):
     return list(rows.values())
 
 
+def sort_key(row):
+    """같은 구성의 실행이 붙어 있도록: 벤치마크, 코어 수, width, 나머지 설정, 실행 시각 순."""
+    def num(v):
+        return (0, float(v), "") if v.replace(".", "", 1).isdigit() else (1, 0.0, v)
+    rest = [k for k in CONFIG_COLS if k not in ("benchmark", "cores", "width")]
+    return ([(1, 0.0, row["benchmark"]), num(row["cores"]), num(row["width"])]
+            + [num(row[k]) for k in rest]
+            + [(1, 0.0, row["gem5_finished"]), (1, 0.0, row["run_id"])])
+
+
 def record(out_dir, gem5_ran, commit=None, path=RUNS_CSV):
     """
     결과 폴더 하나를 기록에 넣는다. 반환: (줄, 'added' 또는 'updated')
@@ -133,7 +143,7 @@ def record(out_dir, gem5_ran, commit=None, path=RUNS_CSV):
             rows[rows.index(old)] = new
         else:
             rows.append(new)
-        rows.sort(key=lambda r: (r["gem5_finished"], r["run_id"]))
+        rows.sort(key=sort_key)
         f.seek(0)
         f.truncate()
         w = csv.DictWriter(f, fieldnames=COLUMNS, lineterminator="\n")
