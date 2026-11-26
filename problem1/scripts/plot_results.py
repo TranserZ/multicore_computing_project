@@ -6,7 +6,13 @@
   fig2_width.png     width 실험 (2/4/8-wide, 1코어): speedup, 전력, 최고 온도
   fig3_tradeoff.png  코어를 늘리는 방향과 폭을 넓히는 방향의 전력 대비 speedup
   fig4_window.png    8-wide에서 윈도우를 고정한 경우와 두 배로 키운 경우
+  fig5_power_cores.png, fig6_power_width.png
+                     전력이 어디로 가는지 (W): 부품별, dynamic과 leakage
   summary_table.csv  그래프에 쓴 값 전부 (구성별 평균, 표준편차, speedup)
+  power_breakdown.csv  구성별 부품별 전력 (fig5, fig6에 쓴 값)
+
+fig5, fig6은 실행별 상세 통계(problem1/results/run_details.csv)를 읽어 그린다.
+이 파일은 extract_details.py가 out/ 의 원본에서 뽑아 만든다.
 
 출력 폴더: problem1/results/figures/
 
@@ -32,6 +38,7 @@ from matplotlib.patches import FancyBboxPatch  # noqa: E402
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
+import extract_details  # noqa: E402
 import results_log  # noqa: E402
 
 OUT_DIR = os.path.join(os.path.dirname(results_log.RUNS_CSV), "figures")
@@ -49,6 +56,12 @@ GRID, AXIS = "#e1e0d9", "#c3c2b7"
 # 그림은 보고서 본문 폭(약 7.2인치)에 맞춰 그린다. 넣을 때 줄이지 않으면 글자가 이 크기로 보인다.
 FIG_W = 7.2
 FS_LABEL, FS_TICK, FS_VALUE, FS_NOTE = 7.5, 7, 6.2, 6.2
+
+# 부품별 전력: (열 이름, 범례 이름, 색). 색은 범주용 순서를 그대로 쓴다.
+PARTS = [("core", "Core logic", "#2a78d6"), ("l1", "L1 caches", "#eb6834"),
+         ("l2", "L2 cache", "#1baf7a"), ("bus", "Interconnect (bus)", "#eda100"),
+         ("mc", "Memory controller", "#e87ba4")]
+DYN_COLOR, LEAK_COLOR = "#6250d6", "#b5b4ad"
 
 WINDOW_DEFAULT = ("128", "64", "32", "32")
 WINDOW_HALF = ("64", "32", "16", "16")
@@ -197,6 +210,102 @@ def three_metric_figure(stats, configs, names, base_idx, legend_title, speedup_l
 
 
 # ----------------------------------------------------------------------------
+# 전력 분해
+# ----------------------------------------------------------------------------
+def collect_breakdown(groups, keys, csv_path):
+    """
+    구성별 부품별 전력의 평균. {(bench, cores, width): {부품: (dyn, leak)}}.
+    실행별 값은 run_details.csv에서 읽고, 구성별 평균은 csv_path에 표로 저장한다.
+    """
+    details = extract_details.read_details()
+    result = {}
+    for key in keys:
+        runs = [details[r["run_id"]] for r in groups[key + (WINDOW_DEFAULT,)]
+                if r["run_id"] in details]
+        if not runs:
+            sys.exit(f"run_details.csv에 {key} 구성의 실행이 없습니다. "
+                     "먼저 problem1/scripts/extract_details.py를 실행하세요.")
+        result[key] = {k: tuple(statistics.mean(float(r[f"{k}_{t}_W"]) for r in runs)
+                                for t in ("dynamic", "leakage"))
+                       for k, _, _ in PARTS}
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["benchmark", "cores", "width", "total_W", "dynamic_W", "leakage_W"]
+                   + [f"{k}_{t}_W" for k, _, _ in PARTS for t in ("dynamic", "leakage")]
+                   + [f"{k}_share_pct" for k, _, _ in PARTS])
+        for key in keys:
+            p = result[key]
+            dyn = sum(v[0] for v in p.values())
+            leak = sum(v[1] for v in p.values())
+            w.writerow([*key, f"{dyn + leak:.3f}", f"{dyn:.3f}", f"{leak:.3f}"]
+                       + [f"{p[k][j]:.4f}" for k, _, _ in PARTS for j in (0, 1)]
+                       + [f"{sum(p[k]) / (dyn + leak) * 100:.2f}" for k, _, _ in PARTS])
+    return result
+
+
+def breakdown_figure(bd, configs, tick_names, fname):
+    """
+    전력이 어디로 가는지를 W 단위로 쌓아 그린다. 막대 하나가 구성 하나.
+    왼쪽: 부품별 (코어 로직, L1 캐시, 공유 부분), 오른쪽: dynamic과 static(leakage).
+    비율이 아니라 크기로 그려서, 구성이 커질 때 어느 부분이 늘고 어느 부분이 그대로인지 보인다.
+    configs: [(cores, width)] 3개, tick_names: 막대 아래에 적을 이름 3개.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(FIG_W, 2.75))
+    fig.subplots_adjust(left=0.06, right=0.995, top=0.88, bottom=0.17, wspace=0.17)
+    xs, labels = [], []
+    for bi in range(len(BENCHES)):
+        for ci in range(len(configs)):
+            xs.append(bi * (len(configs) + 0.9) + ci)
+            labels.append(tick_names[ci])
+    keys = [(b, c, w) for b in BENCHES for c, w in configs]
+    totals = [sum(sum(v) for v in bd[k].values()) for k in keys]
+    top = nice_top(max(totals) * 0.98)   # 막대 위 숫자가 들어갈 만큼만 여유를 둔다
+
+    def setup(ax):
+        ax.set_xlim(xs[0] - 0.8, xs[-1] + 0.8)
+        ax.set_ylim(0, top)
+        ax.set_xticks(xs)
+        ax.set_xticklabels(labels)
+        style_axis(ax, "Average power (W)")
+        for bi, b in enumerate(BENCHES):   # 벤치마크 이름은 묶음 가운데 아래에
+            mid = statistics.mean(xs[bi * len(configs):(bi + 1) * len(configs)])
+            ax.annotate(b, (mid, 0), xytext=(0, -19), textcoords="offset points",
+                        ha="center", va="top", fontsize=FS_TICK, color=INK2)
+
+    def stack(ax, series, top_labels, note):
+        """series: [(이름, 색, [막대별 값])]. 막대 사이와 조각 사이는 흰 틈으로 나눈다."""
+        bottom = [0.0] * len(xs)
+        for name, color, vals in series:
+            ax.bar(xs, vals, 0.82, bottom=bottom, color=color, edgecolor="white",
+                   linewidth=0.7, label=name)
+            bottom = [b + v for b, v in zip(bottom, vals)]
+        for x, t, text in zip(xs, totals, top_labels):
+            ax.annotate(text, (x, t), xytext=(0, 2), textcoords="offset points",
+                        ha="center", va="bottom", fontsize=FS_VALUE, color=INK2)
+        ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.02), ncol=len(series), frameon=False,
+                  fontsize=FS_TICK, labelcolor=INK2, handlelength=1.1, handleheight=0.8,
+                  columnspacing=1.2, borderaxespad=0)
+        ax.annotate(note, (0.012, 0.985), xycoords="axes fraction", va="top",
+                    fontsize=FS_NOTE, color=MUTED)
+
+    # 버스와 메모리 컨트롤러는 1 W에 못 미쳐 따로 그리면 보이지 않으므로 L2와 묶는다.
+    groups = [("Core logic", ["core"], PARTS[0][2]), ("L1 caches", ["l1"], PARTS[1][2]),
+              ("Shared: L2, bus, mem. controller", ["l2", "bus", "mc"], PARTS[2][2])]
+    setup(axes[0])
+    stack(axes[0],
+          [(name, color, [sum(sum(bd[k][p]) for p in parts) for k in keys])
+           for name, parts, color in groups],
+          [f"{t:.0f}" if t >= 10 else f"{t:.1f}" for t in totals], "labels: total power (W)")
+
+    setup(axes[1])
+    dyn = [sum(v[0] for v in bd[k].values()) for k in keys]
+    leak = [sum(v[1] for v in bd[k].values()) for k in keys]
+    stack(axes[1], [("Dynamic", DYN_COLOR, dyn), ("Static (leakage)", LEAK_COLOR, leak)],
+          [f"{lk / t * 100:.0f}%" for lk, t in zip(leak, totals)], "labels: static share of total")
+    save(fig, fname)
+
+
+# ----------------------------------------------------------------------------
 def main():
     groups = load()
 
@@ -300,6 +409,13 @@ def main():
                  "scaled with width: ROB 256 / IQ 128 / LQ 64 / SQ 64"], RAMP2, None)
     save(fig, "fig4_window.png")
 
+    # 5, 6) 전력이 어디로 가는지
+    bd_keys = ([(b, c, 4) for b in BENCHES for c in (1, 4, 8)]
+               + [(b, 1, w) for b in BENCHES for w in (2, 8)])
+    bd = collect_breakdown(groups, bd_keys, os.path.join(OUT_DIR, "power_breakdown.csv"))
+    breakdown_figure(bd, [(1, 4), (4, 4), (8, 4)], ["1c", "4c", "8c"], "fig5_power_cores.png")
+    breakdown_figure(bd, [(1, 2), (1, 4), (1, 8)], ["2w", "4w", "8w"], "fig6_power_width.png")
+
     # 요약 표: 그래프에 쓴 값 전부
     table = os.path.join(OUT_DIR, "summary_table.csv")
     with open(table, "w", newline="") as f:
@@ -327,7 +443,8 @@ def main():
             row("width_scaled_window", b, 1, 2, WINDOW_HALF, half[bi], half[bi], "1 core 2-wide ROB 64")
             row("width_scaled_window", b, 1, 4, WINDOW_DEFAULT, widths[1][bi], half[bi], "1 core 2-wide ROB 64")
             row("width_scaled_window", b, 1, 8, WINDOW_DOUBLE, double[bi], half[bi], "1 core 2-wide ROB 64")
-    print("표:\n  " + os.path.relpath(table))
+    print("표:\n  " + os.path.relpath(table)
+          + "\n  " + os.path.relpath(os.path.join(OUT_DIR, "power_breakdown.csv")))
 
 
 if __name__ == "__main__":
