@@ -17,15 +17,21 @@ multicore_computing_project/
 │   │   └── hotspot.config               HotSpot 열 환경 설정 (방열판, 주변 온도 등)
 │   ├── scripts/
 │   │   ├── run_whole_pipeline.py        전체 실행: gem5(Docker) → glue 1 → McPAT → glue 2 → HotSpot
+│   │   ├── run_repeats.py               반복 실행: 구성마다 실행 횟수가 목표에 이를 때까지 돌림
 │   │   ├── regression_test.sh           회귀 테스트: testcase별 결과 검사 (코드를 바꿀 때마다 실행)
-│   │   └── results_log.py               실행 기록 관리: runs.csv에 추가, 구성별 평균·표준편차 요약
+│   │   ├── results_log.py               실행 기록 관리: runs.csv에 추가, 구성별 평균·표준편차 요약
+│   │   ├── extract_details.py           실행별 상세 통계: out/ 원본에서 분석에 쓰는 값만 뽑아 run_details.csv로 저장
+│   │   └── plot_results.py              보고서용 그래프와 요약 표 생성
 │   ├── results/
-│   │   └── runs.csv                     실행 기록 (gem5 실행 한 번이 한 줄, 자동으로 쌓임)
+│   │   ├── runs.csv                     실행 기록 (gem5 실행 한 번이 한 줄, 자동으로 쌓임)
+│   │   ├── run_details.csv              실행별 상세 통계 (실행 한 번이 한 줄, 67개 값)
+│   │   └── figures/                     그래프(fig1~fig6)와 그래프에 쓴 값의 표
 │   └── changes/
 │       └── mcpat_no_return_fixed.patch  McPAT 무한 루프 버그 수정
 ├── problem2/
 ├── tools/                               도구 설치 위치 (업로드 안 함)
-└── out/                                 시뮬레이션 출력 (업로드 안 함)
+├── out/                                 시뮬레이션 출력 (업로드 안 함)
+└── .venv/                               그래프용 Python 가상환경 (업로드 안 함)
 ```
 
 ## 실행 방법
@@ -127,6 +133,76 @@ python3 problem1/scripts/results_log.py summary
 python3 problem1/scripts/results_log.py summary --out summary.csv
 ```
 
+### 반복 실행
+
+같은 구성을 여러 번 돌릴 때는 `run_repeats.py`를 씁니다. `runs.csv`에 이미 있는 횟수를 세어 모자란 만큼만 돌리므로, 중간에 끊겨도 같은 명령으로 이어서 진행됩니다.
+
+```bash
+# 구성마다 총 3회가 되도록, 4개씩 동시에 실행
+python3 problem1/scripts/run_repeats.py -n 3 -j 4 canneal:1:4 canneal:4:4 canneal:8:4
+
+# ROB / IQ / LQ / SQ를 바꾼 구성 (뒤에 네 값을 붙임)
+python3 problem1/scripts/run_repeats.py -n 3 canneal:1:8:256:128:64:64
+
+# 무엇을 돌릴지만 확인
+python3 problem1/scripts/run_repeats.py -n 3 --dry-run canneal:1:4
+```
+
+- testcase는 `<benchmark>:<코어 수>:<width>` 형식입니다. 출력은 `out/<benchmark>_c<코어 수>_w<width>_r<번호>/`에 따로 남습니다.
+- 동시 실행 개수(`-j`)는 호스트 부하를 바꿔 시작 상태에 영향을 주므로, 비교할 실험끼리는 같은 값(지금까지 4)으로 맞춥니다.
+
+## 실행별 상세 통계 (`problem1/results/run_details.csv`)
+
+`out/`은 실행 하나에 2~5 MB라 GitHub에 올리지 않습니다. 그 대부분은 gem5가 기록한 통계 수천 줄과 설정 파일이고, 분석에 실제로 쓰는 값은 실행당 수십 개입니다. 그 값만 뽑아 실행 하나를 한 줄로 저장한 것이 이 파일입니다.
+
+```bash
+# out/ 의 원본에서 뽑아 갱신 (실험을 더 돌린 뒤 실행)
+python3 problem1/scripts/extract_details.py
+```
+
+| 묶음 | 열 | 출처 |
+|---|---|---|
+| 구성 | `run_id`, `out_name`, 벤치마크, 코어 수, width, ROB 등 | `runs.csv` |
+| 실행한 양 | ROI 시간, 명령어 수(전체, 사용자 모드), µop 수, FP 연산 수, load, store, 분기, 함수 호출, IPC | gem5 `stats.txt` (모든 코어의 합) |
+| 코어 동작 | 코어가 ROI 중 동작한 비율(평균, 최소, 최대), 잠든 횟수 | gem5 `stats.txt` |
+| 파이프라인 | decode한 µop 수, 분기 예측 실패, rename이 막힌 비율, 아무것도 issue하지 못한 비율, ROB·IQ·LQ·SQ·레지스터가 가득 찬 횟수 | gem5 `stats.txt` |
+| 메모리 계층 | L1I·L1D·L2 miss, L2 miss 평균 지연, TLB miss, 버스 패킷 수, 메모리 읽기·쓰기 | gem5 `stats.txt` |
+| 전력 | 부품별(코어 로직, L1, L2, 버스, 메모리 컨트롤러) dynamic과 leakage, 코어 안 유닛별 dynamic, 합계, 면적 | McPAT `mcpat_out.txt` |
+| 온도 | 최고 온도와 그 블록, 평균 온도, L2 온도, 가장 뜨거운 실행 블록의 전력 밀도 | HotSpot 결과 |
+
+- `runs.csv`의 줄과 `run_id`로 이어집니다. 원본의 `stats.txt`가 그 `run_id`와 일치할 때만 뽑습니다.
+- 원본이 이 컴퓨터에 없는 실행(다른 사람이 돌렸거나 지운 것)은 기존 줄을 그대로 둡니다. 각자 자기 실행을 뽑아 올리면 한 파일에 모입니다.
+- L1 캐시는 McPAT이 코어 안에 넣어 계산하므로, 명령어 캐시와 데이터 캐시를 코어에서 꺼내 따로 적었습니다.
+- 뽑아 두지 않은 값이 필요해지면 `extract_details.py`의 `COLUMNS`에 열을 추가하고 다시 실행합니다. 원본이 있는 실행만 새 값이 채워집니다.
+
+## 그래프와 요약 표 (`problem1/results/figures/`)
+
+`plot_results.py`가 `runs.csv`와 `run_details.csv`를 읽어 보고서용 그래프를 만듭니다. `out/`이 없어도 그릴 수 있습니다.
+
+```bash
+# 처음 한 번: 그래프용 가상환경 만들기 (matplotlib)
+python3 -m venv .venv && .venv/bin/python -m pip install matplotlib
+
+# 그래프와 표 만들기
+.venv/bin/python problem1/scripts/plot_results.py
+```
+
+| 파일 | 내용 |
+|---|---|
+| `fig1_cores.png` | 코어 수 실험(1/4/8코어, 4-wide): speedup, 평균 전력, 최고 온도 |
+| `fig2_width.png` | width 실험(2/4/8-wide, 1코어): speedup, 평균 전력, 최고 온도 |
+| `fig3_tradeoff.png` | 코어를 늘리는 방향과 폭을 넓히는 방향의 전력 대비 speedup (기준: 1코어 4-wide) |
+| `fig4_window.png` | 8-wide에서 ROB/IQ/LQ/SQ를 고정한 경우와 두 배로 키운 경우 |
+| `fig5_power_cores.png`, `fig6_power_width.png` | 전력이 어디로 가는지(W): 부품별, dynamic과 leakage |
+| `summary_table.csv` | fig1~fig4에 쓴 값 (구성별 평균, 표준편차, speedup, 면적 등) |
+| `power_breakdown.csv` | fig5, fig6에 쓴 값 (구성별 부품별 전력과 비율) |
+
+- 모든 값은 같은 구성을 여러 번 돌린 평균이고, 오차 막대는 표준편차입니다.
+- 기본 설정(warm-up 1회)의 실행만 씁니다. ROB/IQ/LQ/SQ를 바꾼 실행은 fig4에만 씁니다.
+- speedup의 기준은 실험마다 가장 작은 구성입니다(코어 수 실험은 1코어, width 실험은 2-wide).
+- 온도 그래프의 세로축은 주변 온도(45°C)에서 시작합니다.
+- `python3 -m venv`가 실패하면(`ensurepip` 없음) `python3 -m venv --without-pip .venv`로 만든 뒤 `get-pip.py`로 pip를 설치합니다.
+
 ## 회귀 테스트
 
 코드를 바꾼 뒤 파이프라인 결과가 여전히 올바른지 확인합니다.
@@ -157,7 +233,8 @@ problem1/scripts/regression_test.sh --update-baseline
 | 도구 수정 사항 | `problem1/changes/*` | 모두가 같은 수정본을 써야 함 |
 | 설치 스크립트 | `setup.sh` | 각자 같은 버전의 도구를 설치할 수 있음 |
 | 실행 기록 | `problem1/results/runs.csv` | 여러 번 실행한 값을 모아 평균을 내는 데 필요 |
-| 결과 요약 | 결과표(CSV), 그래프 (예정) | 용량이 작고 보고서 작성에 필요 |
+| 실행별 상세 통계 | `problem1/results/run_details.csv` | `out/` 원본 대신 올리는 요약. 분석과 그래프에 쓰는 값 |
+| 그래프와 표 | `problem1/results/figures/*` | 용량이 작고 보고서 작성에 필요 |
 | 문서 | `README.md`, `PROBLEM1.md`, `PROBLEM2.md` | |
 
 ## GitHub에 올리면 안 되는 것 ❌
@@ -166,7 +243,8 @@ problem1/scripts/regression_test.sh --update-baseline
 |---|---|---|
 | 도구 본체 | `tools/gem5`, `tools/mcpat`, `tools/hotspot` | 용량이 큼 (gem5 실행 파일만 약 1GB). 각자 설치 |
 | PARSEC 디스크 이미지, 커널 | `tools/resources/` | 26GB라 GitHub 용량 제한(파일당 100MB)을 넘음 |
-| 시뮬레이션 출력 | `out/` | 실행할 때마다 수십 MB씩 생김. 필요한 결과만 요약해서 올림 |
+| 시뮬레이션 출력 | `out/` | 실행 하나에 2~5 MB씩 생김. 필요한 값은 `run_details.csv`로 뽑아서 올림 |
+| 그래프용 가상환경 | `.venv/` | 각자 만드는 도구 환경 (약 180 MB) |
 | Python 캐시 | `__pycache__/`, `*.pyc` | 자동 생성 파일 |
 
 위 항목은 `.gitignore`에 등록되어 있어서 `git add .`를 해도 올라가지 않습니다.
