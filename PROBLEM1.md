@@ -25,6 +25,7 @@ multicore_computing_project/
 │   ├── results/
 │   │   ├── runs.csv                     실행 기록 (gem5 실행 한 번이 한 줄, 자동으로 쌓임)
 │   │   ├── run_details.csv              실행별 상세 통계 (실행 한 번이 한 줄, 67개 값)
+│   │   ├── out_raw_20261127.tar.gz      out/ 원본의 압축본 (실행 138개, 17 MB)
 │   │   └── figures/                     그래프(fig1~fig6)와 그래프에 쓴 값의 표
 │   └── changes/
 │       └── mcpat_no_return_fixed.patch  McPAT 무한 루프 버그 수정
@@ -175,6 +176,23 @@ python3 problem1/scripts/extract_details.py
 - L1 캐시는 McPAT이 코어 안에 넣어 계산하므로, 명령어 캐시와 데이터 캐시를 코어에서 꺼내 따로 적었습니다.
 - 뽑아 두지 않은 값이 필요해지면 `extract_details.py`의 `COLUMNS`에 열을 추가하고 다시 실행합니다. 원본이 있는 실행만 새 값이 채워집니다.
 
+### 원본 압축본 (`problem1/results/out_raw_20261127.tar.gz`)
+
+`run_details.csv`에 없는 값이 필요하거나 glue code를 고친 뒤 전력·온도를 다시 계산해야 할 때를 위해, `out/`의 원본을 추려서 압축해 두었습니다. 2026-11-27까지의 실행 138개가 모두 들어 있습니다.
+
+```bash
+# 프로젝트 폴더에서 풀면 out/<이름>/ 으로 복원됨 (같은 이름의 파일은 덮어씀)
+tar -xzf problem1/results/out_raw_20261127.tar.gz
+```
+
+| | 내용 |
+|---|---|
+| 들어 있는 것 | 실행마다 gem5 `stats.txt`, `config.json`, `gem5.log`, 게스트 실행 명령, McPAT 입출력, HotSpot 입출력, `result.json` |
+| 뺀 것 | 파이프라인 실행 로그, `config.json`과 같은 내용의 다른 형식(`config.ini`, `config.dot` 등), 게스트 콘솔 출력, 주기 통계 실행(`out/debug/`), 회귀 테스트의 기준값 |
+
+- 풀고 나면 `extract_details.py`, `run_whole_pipeline.py --skip-gem5`를 그대로 쓸 수 있습니다.
+- 새로 돌린 실행은 이 파일에 들어가지 않습니다. 압축본은 덮어쓰지 말고 날짜를 바꿔 새로 만듭니다(git은 바뀐 압축 파일을 통째로 다시 저장합니다).
+
 ## 그래프와 요약 표 (`problem1/results/figures/`)
 
 `plot_results.py`가 `runs.csv`와 `run_details.csv`를 읽어 보고서용 그래프를 만듭니다. `out/`이 없어도 그릴 수 있습니다.
@@ -234,6 +252,7 @@ problem1/scripts/regression_test.sh --update-baseline
 | 설치 스크립트 | `setup.sh` | 각자 같은 버전의 도구를 설치할 수 있음 |
 | 실행 기록 | `problem1/results/runs.csv` | 여러 번 실행한 값을 모아 평균을 내는 데 필요 |
 | 실행별 상세 통계 | `problem1/results/run_details.csv` | `out/` 원본 대신 올리는 요약. 분석과 그래프에 쓰는 값 |
+| 원본 압축본 | `problem1/results/out_raw_20261127.tar.gz` | 다시 만들 수 없는 gem5 통계의 보관용 (17 MB) |
 | 그래프와 표 | `problem1/results/figures/*` | 용량이 작고 보고서 작성에 필요 |
 | 문서 | `README.md`, `PROBLEM1.md`, `PROBLEM2.md` | |
 
